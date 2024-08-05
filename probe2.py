@@ -4,6 +4,7 @@ from checkin import checkin_generator_pb2
 from google.protobuf import text_format
 from utils import functions
 import argparse, requests, gzip, shutil, os, yaml, re, sys
+import json, datetime
 
 def send_telegram_message(bot_token, chat_id, message):
     response = requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={'chat_id': chat_id, 'text': message})
@@ -15,6 +16,16 @@ def remove_html_tags(text):
 def load_config(config_file):
     with open(config_file, 'r') as file:
         return yaml.safe_load(file)
+
+def load_update_info():
+    if os.path.exists('update_info.json'):
+        with open('update_info.json', 'r') as f:
+            return json.load(f)
+    return {}
+
+def write_update_info(update_info):
+    with open('update_info.json', 'w') as f:
+        json.dump(update_info, f, indent=2)
 
 if 'bot_token' in os.environ and 'chat_id' in os.environ:
     bot_token, chat_id = os.environ['bot_token'], os.environ['chat_id']
@@ -59,6 +70,9 @@ post_data.close()
 print("Checking device... " + model)
 print("Current version... " + incremental)
 
+config_name = os.path.splitext(os.path.basename(args.config))[0]
+update_info = load_update_info()
+
 try:
     download_url, found = "", False
     response.ParseFromString(r.content)
@@ -69,41 +83,45 @@ try:
         if b'https://android.googleapis.com' in entry.value:
             download_url, found = entry.value.decode(), True
             break
+    update_info[config_name] = {
+        "title": "",
+        "device": model,
+        "description": "",
+        "url": download_url,
+        "size": "",
+        "found": True,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
     if found:
-        message = "Update found...."
         for entry in response.setting:
             if entry.name.decode() == "update_title":
-                message += "\n\nTITLE:\n" + entry.value.decode()
+                update_info[config_name]["title"] = entry.value.decode()
                 break
         for entry in response.setting:
             if entry.name.decode() == "update_description":
-                message += "\n\nCHANGELOG:\n" + entry.value.decode()
+                update_info[config_name]["description"] = remove_html_tags(entry.value.decode())
                 break
-        message += "\n\nOTA URL obtained: " + download_url
         for entry in response.setting:
             if entry.name.decode() == "update_size":
-                message += "\nSIZE: " + entry.value.decode()
+                update_info[config_name]["size"] = entry.value.decode()
                 break
-        clean_message = remove_html_tags(message)
-        response = send_telegram_message(bot_token, chat_id, clean_message)
-        print(clean_message)
-    if args.download:
-        print("Downloading OTA file")
-        with requests.get(download_url, stream=True) as resp:
-            resp.raise_for_status()
-            filename = download_url.split('/')[-1]
-            total_size = int(resp.headers.get('content-length', 0))
-            chunk_size = 1024
-            with open(filename, 'wb') as file:
-                progress = 0
-                for chunk in resp.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        file.write(chunk)
-                        progress += len(chunk)
-                        percentage = (progress / total_size) * 100
-                        print(f"Downloaded {progress} of {total_size} bytes ({percentage:.2f}%)", end="\r")
-            print(f"File downloaded and saved as {filename}!")
+        print("Found updates.")
+    else:
+        update_info[config_name] = {
+            "found": False,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    write_update_info(update_info)
     if not found:
         print("There are no new updates for your device.")
 except:
     print("Unable to obtain OTA URL.")
+
+# Send update information to Telegram
+message = f"Update available for {model}:\n\n"
+if update_info[config_name]['found']:
+    message += f"Title:\n{update_info[config_name]['title']}\n\n"
+    message += f"Description:\n{update_info[config_name]['description']}\n\n"
+    message += f"Size: {update_info[config_name]['size']}\n\n"
+    message += f"URL: {update_info[config_name]['url']}\n"
+    send_telegram_message(bot_token, chat_id, message)

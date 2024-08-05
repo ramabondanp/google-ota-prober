@@ -8,6 +8,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+
     - uses: actions/checkout@v4
     - name: Prepare the environment
       run: |
@@ -20,3 +21,10 @@ jobs:
         chat_id: ${{ secrets.CHAT_ID }}
       run: |
         for file in configs/config-*.yml; do python probe2.py -c $file && echo "//"; done
+
+    - name: Check for updates and create release
+      if: success()
+      run: |
+        bash release.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
