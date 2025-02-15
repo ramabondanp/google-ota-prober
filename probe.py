@@ -5,13 +5,8 @@ from google.protobuf import text_format
 from utils import functions
 import argparse, requests, gzip, shutil, os, yaml
 
-def load_config(config_file):
-    with open(config_file, 'r') as file:
-        return yaml.safe_load(file)
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--debug', action='store_true', help='Print debug information to text file.')
-parser.add_argument('-c', '--config', default='config.yml', help='Path to the config file')
 parser.add_argument('--download', action='store_true', help='Download the OTA file.')
 parser.add_argument('--fingerprint', help='Get the OTA using this fingerprint. Reading the config YML file is skipped.')
 parser.add_argument('--model', help='Specify the model of the device. Required with --fingerprint.')
@@ -26,7 +21,9 @@ if args.fingerprint:
     config.insert(2, temp[0])
     config.insert(3, temp[1])
 else:
-    config = load_config(args.config)
+    with open('config.yml', 'r') as file:
+        config = yaml.safe_load(file)
+        file.close()
 
 # <oem>/<product>/<device>:<android_version>/<build_tag>/<incremental>:user/release-keys
 if not args.fingerprint:
@@ -47,9 +44,6 @@ else:
         print('You must specify a model with --model when using --fingerprint.')
         exit(1)
 
-print("Checking device... " + model)
-print("Current version... " + current_incremental)
-
 headers = {
     'accept-encoding': 'gzip, deflate',
     'content-encoding': 'gzip',
@@ -69,7 +63,6 @@ else:
     build.id = f'{oem}/{product}/{device}:{android_version}/{current_build}/{current_incremental}:user/release-keys' # Put the build fingerprint here
 build.timestamp = 0
 build.device = device
-print("Fingerprint... " + build.id)
 
 # Checkin proto
 checkinproto.build.CopyFrom(build)
@@ -113,14 +106,10 @@ try:
     setting = {entry.name: entry.value for entry in response.setting}
     update_title = setting.get(b'update_title', b'').decode()
     if update_title:
-        print("Update found....")
-        print("Update title: " + update_title)
-        update_desc = setting.get(b'update_description', b'').decode()
-        print("Update changelogs:\n" + update_desc)
-        download_url = setting.get(b'update_url', b'').decode()
+        print("Update title: " + setting.get(b'update_title', b'').decode())
+    download_url = setting.get(b'update_url', b'').decode()
+    if download_url:
         print("OTA URL obtained: " + download_url)
-        download_size = setting.get(b'update_size', b'').decode()
-        print("OTA SIZE: " + download_size)
     else:
         print("No OTA URL found for your build. Either Google does not recognize your build fingerprint, or there are no new updates for your device.")
     if args.download and download_url:
