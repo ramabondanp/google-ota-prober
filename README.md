@@ -51,11 +51,14 @@
 
 ## ITEL
 * itel A80 (A671LC)
+* itel A95 5G / itel ZENO 5G+ (A671N)
 * itel P55 5G (P661N)
 * itel P65 (P671L)
+* itel P70 (P673L)
 * itel RS4 (S666LN)
 * itel S25 (S685LN)
 * itel S25 Ultra (S686LN)
+* itel VistaTab 30 Pro (P13001L)
 
 ## XPAD
 * Infinix XPAD (X1101)
