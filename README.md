@@ -80,6 +80,7 @@
 ## GT SERIES
 * Infinix GT 10 Pro (X6739)
 * Infinix GT 20 Pro (X6871)
+* Infinix GT 30 Pro (X6873)
 
 ## NOTE SERIES
 * Infinix NOTE 30 VIP (X6710)
