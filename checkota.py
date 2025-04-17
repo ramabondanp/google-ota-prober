@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List
@@ -94,6 +95,9 @@ class Config:
 
 class TelegramNotifier:
     """Handles sending notifications via Telegram Bot API."""
+    # Maximum length for a single Telegram message
+    MAX_MESSAGE_LENGTH = 4000
+    
     def __init__(self, bot_token: Optional[str], chat_id: Optional[str]):
         if not bot_token or not chat_id:
              raise ValueError("Bot token and chat ID are required for TelegramNotifier.")
@@ -101,35 +105,120 @@ class TelegramNotifier:
         self.chat_id = chat_id
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
 
-    def send_message(self, message: str, button_text: Optional[str] = None, button_url: Optional[str] = None) -> bool:
-        """Sends a message via the Telegram Bot API."""
-        Logger.info("Sending Telegram notification...")
-        url = f"{self.base_url}/sendMessage"
-        payload = {
-            'chat_id': self.chat_id,
-            'text': message,
-            'parse_mode': 'html',
-            'disable_web_page_preview': True,
-        }
-        if button_text and button_url:
-             payload['reply_markup'] = {
-                 'inline_keyboard': [[
-                     {'text': button_text, 'url': button_url}
-                 ]]
-             }
+    def _split_message(self, message: str) -> List[str]:
+        """Splits a long message into chunks that respect Telegram's length limit and HTML formatting.
+        
+        Args:
+            message: The message to split, potentially containing HTML tags.
+            
+        Returns:
+            List of message parts that are each under the length limit.
+        """
+        if len(message) <= self.MAX_MESSAGE_LENGTH:
+            return [message]
+        
+        parts = []
+        current_part = ""
+        
+        # Split on double newlines to keep logical blocks together
+        blocks = message.split('\n\n')
+        
+        for block in blocks:
+            # If adding this block would exceed the limit, store current part and start new one
+            if len(current_part + block + '\n\n') > self.MAX_MESSAGE_LENGTH:
+                if current_part:
+                    parts.append(current_part.rstrip())
+                current_part = block + '\n\n'
+            else:
+                current_part += block + '\n\n'
+        
+        # Add the last part if it's not empty
+        if current_part:
+            parts.append(current_part.rstrip())
+        
+        # Post-process parts to ensure HTML tags are properly closed and reopened
+        processed_parts = []
+        open_tags = []
+        
+        for i, part in enumerate(parts):
+            # Find all opening tags in order
+            tags = re.findall(r'<(\w+)[^>]*>', part)
+            close_tags = re.findall(r'</(\w+)>', part)
+            
+            # Track which tags are still open at the end of this part
+            for tag in tags:
+                if tag not in close_tags:
+                    open_tags.append(tag)
+            for tag in close_tags:
+                if tag in open_tags:
+                    open_tags.remove(tag)
+            
+            # If this isn't the last part and we have open tags
+            if i < len(parts) - 1:
+                # Close all open tags at the end of this part
+                for tag in reversed(open_tags):
+                    part += f'</{tag}>'
+                
+                # Reopen all tags at the start of the next part
+                parts[i + 1] = ''.join(f'<{tag}>' for tag in open_tags) + parts[i + 1]
+            
+            processed_parts.append(part)
+        
+        return processed_parts
 
+    def send_message(self, message: str, button_text: Optional[str] = None, button_url: Optional[str] = None) -> bool:
+        """Sends a message via the Telegram Bot API, splitting if necessary.
+        
+        Args:
+            message: The message to send, may contain HTML formatting.
+            button_text: Optional text for an inline button.
+            button_url: Optional URL for the inline button.
+            
+        Returns:
+            bool: True if all message parts were sent successfully, False otherwise.
+        """
+        Logger.info("Sending Telegram notification...")
+        
+        # Split the message if needed
+        message_parts = self._split_message(message)
+        
         try:
-            response = requests.post(url, json=payload, timeout=15) # Added timeout
-            response.raise_for_status() # Raises HTTPError for bad responses (4xx or 5xx)
+            for i, part in enumerate(message_parts):
+                payload = {
+                    'chat_id': self.chat_id,
+                    'text': part,
+                    'parse_mode': 'html',
+                    'disable_web_page_preview': True,
+                }
+                
+                # Only add the button to the last part
+                if i == len(message_parts) - 1 and button_text and button_url:
+                    payload['reply_markup'] = {
+                        'inline_keyboard': [[
+                            {'text': button_text, 'url': button_url}
+                        ]]
+                    }
+
+                response = requests.post(
+                    f"{self.base_url}/sendMessage",
+                    json=payload,
+                    timeout=15
+                )
+                response.raise_for_status()
+                
+                # Add a small delay between messages to avoid rate limiting
+                if i < len(message_parts) - 1:
+                    time.sleep(0.5)
+            
             Logger.success("Telegram notification sent successfully.")
             return True
+            
         except requests.exceptions.RequestException as e:
             Logger.error(f"Failed to send Telegram notification: {e}")
             return False
         except Exception as e:
             Logger.error(f"An unexpected error occurred during Telegram notification: {e}")
             return False
-
 
 class UpdateChecker:
     """Checks for OTA updates using the Android Checkin service."""
@@ -599,6 +688,8 @@ def main() -> int:
             f"<b>Size:</b> {update_size}\n"
             f"<b>Fingerprint:</b>\n<code>{target_fingerprint}</code>"
         )
+
+        print(message)
 
         # Send the notification via the notifier instance
         if not telegram_notifier.send_message(message, "Google OTA Link", update_url):
