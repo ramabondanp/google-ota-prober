@@ -31,7 +31,6 @@ CHECKIN_URL = 'https://android.googleapis.com/checkin'
 USER_AGENT_TEMPLATE = 'Dalvik/2.1.0 (Linux; U; Android {android_version}; {model} Build/{build_tag})'
 PROTO_CONTENT_TYPE = 'application/x-protobuffer'
 UPDATE_INFO_FILENAME = "update_info.json"
-CONFIG_FILENAME_DEFAULT = "config.yml"
 DEBUG_FILENAME = "debug_checkin_response.txt"
 
 # Simple colored console logger
@@ -389,8 +388,8 @@ def get_target_fingerprint_from_ota(ota_url: str) -> Optional[str]:
 def check_github_release_exists(release_tag: str) -> bool:
     """Check if GitHub release with given tag exists."""
     if not check_command_exists("gh"):
-        Logger.warning("GitHub CLI 'gh' not found. Skipping release check.")
-        return False
+        Logger.error("GitHub CLI 'gh' not found. Please install 'gh' to check for releases.")
+        sys.exit(1)
 
     Logger.info(f"Checking for GitHub release with tag: {release_tag}...")
     try:
@@ -420,9 +419,9 @@ def setup_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '-c', '--config',
-        default=CONFIG_FILENAME_DEFAULT,
         type=Path,
-        help=f'Path to device configuration YAML file (default: {CONFIG_FILENAME_DEFAULT}).'
+        required=True,
+        help='Path to device configuration YAML file (required).'
     )
     parser.add_argument(
         '--skip-telegram',
@@ -459,6 +458,7 @@ def main() -> int:
         Logger.error(f"Configuration error: {e}")
         return 1
 
+    # Get config name for update info storage
     config_name = args.config.stem
 
     # Setup Telegram notifier
@@ -520,7 +520,7 @@ def main() -> int:
     Logger.info(f"Size: {update_size}")
     Logger.info(f"URL: {update_url}")
 
-    # Check existing GitHub release
+    # Check existing GitHub release - exit if gh command not available
     if not args.skip_git:
         release_tag = update_title
         if check_github_release_exists(release_tag):
