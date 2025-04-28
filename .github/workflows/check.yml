@@ -11,9 +11,10 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install required packages
-      uses: daaku/gh-action-apt-install@v4
+      uses: awalsh128/cache-apt-pkgs-action@latest
       with:
         packages: libarchive-tools
+        version: 1.0
   
     - name: Prepare the environment
       run: |
