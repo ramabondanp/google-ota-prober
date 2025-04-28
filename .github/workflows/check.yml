@@ -9,9 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
+    - name: Install required packages
+      uses: daaku/gh-action-apt-install@v4
+      with:
+        packages: libarchive-tools
+  
     - name: Prepare the environment
       run: |
-        sudo apt update && sudo apt install -y libarchive-tools
         pip install -r requirements.txt
 
     - name: Check ota
