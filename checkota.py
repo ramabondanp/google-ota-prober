@@ -343,7 +343,7 @@ def get_fingerprint(url: str, proxy: Optional[str] = None) -> Optional[str]:
     cmd = (
         f"curl --fail -Ls{proxy_opt} --max-time 60 --limit-rate 100K {shlex.quote(url)} "
         f"| ( bsdtar -Oxf - 'META-INF/com/android/metadata' 2>/dev/null || true ) "
-        f"| ( grep -m1 '^post-build=' | sed 's/^post-build=//' && killall curl ) "
+        f"| ( grep -m1 '^post-build=' | sed 's/^post-build=//' && pkill curl ) "
         f"2>/dev/null"
     )
 
