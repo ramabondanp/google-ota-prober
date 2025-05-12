@@ -76,7 +76,7 @@ class Config:
                 f'{self.incremental}:user/release-keys')
 
 class TgNotify:
-    MAX_LEN = 4000
+    MAX_LEN = 4090
     
     def __init__(self, token: str, chat_id: str, proxies: Optional[Dict] = None):
         if not token or not chat_id:
