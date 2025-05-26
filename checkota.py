@@ -362,28 +362,67 @@ def get_fingerprint(url: str, proxy: Optional[str] = None) -> Optional[str]:
         Log.e(f"Error fetching fingerprint: {e}")
         return None
 
-def check_release(tag: str) -> bool:
+def check_release(tag: str, max_retries: int = 5, retry_delay: int = 2) -> bool:
     if not check_cmd("gh"):
         Log.e("GitHub CLI 'gh' not found")
         sys.exit(1)
 
     Log.i(f"Checking release tag: {tag}...")
-    try:
-        subprocess.run(
-            ["gh", "release", "view", tag],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            check=True,
-            timeout=30
-        )
-        Log.i(f"Release '{tag}' exists")
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        Log.i(f"Release '{tag}' not found")
-        return False
-    except Exception as e:
-        Log.e(f"GitHub check error: {e}")
-        return False
+    
+    for attempt in range(max_retries):
+        try:
+            result = subprocess.run(
+                ["gh", "release", "view", tag],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,  # Don't raise exception on non-zero exit
+                timeout=30,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                Log.i(f"Release '{tag}' exists")
+                return True
+            
+            # Check if it's a 504 Gateway Timeout or other retryable error
+            stderr_output = result.stderr.lower()
+            if any(error in stderr_output for error in ['504', 'gateway timeout', 'timeout', 'connection', 'network']):
+                if attempt < max_retries - 1:
+                    Log.w(f"GitHub API error (attempt {attempt + 1}/{max_retries}): {result.stderr.strip()}")
+                    Log.i(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    Log.e(f"GitHub API failed after {max_retries} attempts: {result.stderr.strip()}")
+                    return False
+            else:
+                # Non-retryable error (like release not found)
+                Log.i(f"Release '{tag}' not found")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            if attempt < max_retries - 1:
+                Log.w(f"GitHub CLI timeout (attempt {attempt + 1}/{max_retries})")
+                Log.i(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            else:
+                Log.e(f"GitHub CLI timed out after {max_retries} attempts")
+                return False
+        except Exception as e:
+            if attempt < max_retries - 1:
+                Log.w(f"GitHub check error (attempt {attempt + 1}/{max_retries}): {e}")
+                Log.i(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            else:
+                Log.e(f"GitHub check error after {max_retries} attempts: {e}")
+                return False
+    
+    return False
 
 def setup_proxy(proxy_url: Optional[str] = None) -> Dict:
     """Set up proxy configuration for requests."""
