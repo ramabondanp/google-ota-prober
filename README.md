@@ -45,6 +45,7 @@
 * TECNO POVA 6 Neo (LI6)
 * TECNO POVA 6 (LI7)
 * TECNO POVA 6 Pro (LI9)
+* TECNO POVA 7 (LJ6)
 
 ## MEGAPAD
 * TECNO MEGAPAD 11 (T1101)
@@ -100,7 +101,10 @@
 * Infinix NOTE 40 (X6853)
 * Infinix NOTE 50 Pro 4G (X6855)
 * Infinix NOTE 50 Pro+ 5G (X6856)
+* Infinix NOTE 50X 5G (X6857)
+* Infinix NOTE 50X 5G (India) (X6857B)
 * Infinix NOTE 50 4G (X6858)
+* Infinix NOTE 50s 5G (X6870)
 </details>
 
 # Google OTA prober
