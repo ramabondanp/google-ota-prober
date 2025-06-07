@@ -63,6 +63,7 @@
 
 ## XPAD
 * Infinix XPAD (X1101)
+* Infinix XPAD GT SD888 (X1301)
 
 ## HOT SERIES
 * Infinix HOT 40i (X6528) (X6528B)
