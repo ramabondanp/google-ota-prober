@@ -37,6 +37,7 @@
 * TECNO SPARK 30 Pro (KL7)
 * TECNO SPARK 30 5G (KL8)
 * TECNO SPARK 30C 5G (KL8H)
+* TECNO SPARK 40 / 40S (KM5)
 
 ## POVA SERIES
 * TECNO POVA Neo 3 (LH6n)
@@ -75,6 +76,7 @@
 * Infinix HOT 50 Pro+ (X6880)
 * Infinix HOT 50 Pro (X6881)
 * Infinix HOT 50 (X6882)
+* Infinix HOT 60i (X6728)
 
 ## ZERO SERIES
 * Infinix ZERO 30 5G (X6731)
