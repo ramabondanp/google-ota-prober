@@ -115,6 +115,9 @@
 * Infinix NOTE 50X 5G (India) (X6857B)
 * Infinix NOTE 50 4G (X6858)
 * Infinix NOTE 50s 5G (X6870)
+
+## SMART SERIES
+* Infinix SMART 10 (X6725)
 </details>
 
 # Google OTA prober
