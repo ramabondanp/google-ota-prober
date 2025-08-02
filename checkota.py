@@ -13,7 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Set
 
 try:
     import requests
@@ -30,6 +30,7 @@ USER_AGENT_TPL = 'Dalvik/2.1.0 (Linux; U; Android {0}; {1} Build/{2})'
 PROTO_TYPE = 'application/x-protobuffer'
 UPDATE_FILE = "update_info.json"
 DEBUG_FILE = "debug_checkin_response.txt"
+PROCESSED_FP_FILE = "processed_fingerprints.txt"
 
 class Log:
     @staticmethod
@@ -78,14 +79,12 @@ class Config:
 class TgNotify:
     MAX_LEN = 4090
     
-    def __init__(self, token: str, chat_id: str, proxies: Optional[Dict] = None):
+    def __init__(self, token: str, chat_id: str):
         if not token or not chat_id:
             raise ValueError("Bot token and chat ID required")
         self.token = token
         self.chat_id = chat_id
         self.url = f"https://api.telegram.org/bot{token}"
-        # Removed proxies from Telegram notifications
-        self.proxies = None
 
     def _split(self, msg: str) -> List[str]:
         if len(msg) <= self.MAX_LEN:
@@ -152,8 +151,6 @@ class TgNotify:
                 r = requests.post(
                     f"{self.url}/sendMessage",
                     json=payload,
-                    # Removed proxies here
-                    proxies=None,
                     timeout=15
                 )
                 r.raise_for_status()
@@ -169,7 +166,7 @@ class TgNotify:
             return False
 
 class UpdateChecker:
-    def __init__(self, cfg: Config, proxies: Optional[Dict] = None):
+    def __init__(self, cfg: Config):
         self.cfg = cfg
         self.ua = USER_AGENT_TPL.format(
             cfg.android_version, cfg.model, cfg.build_tag
@@ -180,8 +177,6 @@ class UpdateChecker:
             'content-type': PROTO_TYPE,
             'user-agent': self.ua
         }
-        # Keep proxies for update checking
-        self.proxies = proxies
 
     def _build_request(self) -> bytes:
         payload = checkin_generator_pb2.AndroidCheckinRequest()
@@ -227,8 +222,6 @@ class UpdateChecker:
                 CHECKIN_URL,
                 data=data,
                 headers=self.headers,
-                # Keep proxies for update check
-                proxies=self.proxies,
                 timeout=10
             )
             r.raise_for_status()
@@ -331,17 +324,14 @@ def check_cmds(cmds: List[str]) -> bool:
         return False
     return True
 
-def get_fingerprint(url: str, proxy: Optional[str] = None) -> Optional[str]:
+def get_fingerprint(url: str) -> Optional[str]:
     Log.i("Fetching target fingerprint...")
     cmds = ['curl', 'bsdtar', 'grep', 'sed']
     if not check_cmds(cmds):
         return None
-
-    # Remove proxy for fingerprint fetching
-    proxy_opt = ""
     
     cmd = (
-        f"curl --fail -Ls{proxy_opt} --max-time 60 --limit-rate 100K {shlex.quote(url)} "
+        f"curl --fail -Ls --max-time 60 --limit-rate 100K {shlex.quote(url)} "
         f"| ( bsdtar -Oxf - 'META-INF/com/android/metadata' 2>/dev/null || true ) "
         f"| ( grep -m1 '^post-build=' | sed 's/^post-build=//' && pkill curl ) "
         f"2>/dev/null"
@@ -362,83 +352,25 @@ def get_fingerprint(url: str, proxy: Optional[str] = None) -> Optional[str]:
         Log.e(f"Error fetching fingerprint: {e}")
         return None
 
-def check_release(tag: str, max_retries: int = 5, retry_delay: int = 2) -> bool:
-    if not check_cmd("gh"):
-        Log.e("GitHub CLI 'gh' not found")
-        sys.exit(1)
+def load_processed_fingerprints(path: Path) -> Set[str]:
+    """Loads processed fingerprints from a file into a set."""
+    if not path.exists():
+        return set()
+    try:
+        with path.open('r') as f:
+            return {line.strip() for line in f if line.strip()}
+    except Exception as e:
+        Log.e(f"Error reading processed fingerprints file {path}: {e}")
+        return set()
 
-    Log.i(f"Checking release tag: {tag}...")
-    
-    for attempt in range(max_retries):
-        try:
-            result = subprocess.run(
-                ["gh", "release", "view", tag],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                check=False,  # Don't raise exception on non-zero exit
-                timeout=30,
-                text=True
-            )
-            
-            if result.returncode == 0:
-                Log.i(f"Release '{tag}' exists")
-                return True
-            
-            # Check if it's a 504 Gateway Timeout or other retryable error
-            stderr_output = result.stderr.lower()
-            if any(error in stderr_output for error in ['504', 'gateway timeout', 'timeout', 'connection', 'network']):
-                if attempt < max_retries - 1:
-                    Log.w(f"GitHub API error (attempt {attempt + 1}/{max_retries}): {result.stderr.strip()}")
-                    Log.i(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                    continue
-                else:
-                    Log.e(f"GitHub API failed after {max_retries} attempts: {result.stderr.strip()}")
-                    return False
-            else:
-                # Non-retryable error (like release not found)
-                Log.i(f"Release '{tag}' not found")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            if attempt < max_retries - 1:
-                Log.w(f"GitHub CLI timeout (attempt {attempt + 1}/{max_retries})")
-                Log.i(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-                retry_delay *= 2
-                continue
-            else:
-                Log.e(f"GitHub CLI timed out after {max_retries} attempts")
-                return False
-        except Exception as e:
-            if attempt < max_retries - 1:
-                Log.w(f"GitHub check error (attempt {attempt + 1}/{max_retries}): {e}")
-                Log.i(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-                retry_delay *= 2
-                continue
-            else:
-                Log.e(f"GitHub check error after {max_retries} attempts: {e}")
-                return False
-    
-    return False
-
-def setup_proxy(proxy_url: Optional[str] = None) -> Dict:
-    """Set up proxy configuration for requests."""
-    if not proxy_url:
-        return {}
-    
-    Log.i(f"Using proxy for update checks: {proxy_url}")
-    
-    # Format: protocol://[user:pass@]host:port
-    if proxy_url.startswith(('socks5://', 'socks4://', 'socks://')):
-        return {'http': proxy_url, 'https': proxy_url}
-    else:
-        # Handle http/https proxies
-        if not proxy_url.startswith(('http://', 'https://')):
-            proxy_url = f"http://{proxy_url}"
-        return {'http': proxy_url, 'https': proxy_url}
+def save_processed_fingerprint(path: Path, fingerprint: str):
+    """Appends a new fingerprint to the processed list."""
+    try:
+        with path.open('a') as f:
+            f.write(f"{fingerprint}\n")
+        Log.s(f"Saved new fingerprint to {path}")
+    except Exception as e:
+        Log.e(f"Failed to save fingerprint to {path}: {e}")
 
 def main() -> int:
     if sys.version_info < (3, 7):
@@ -448,14 +380,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Android OTA Update Checker')
     parser.add_argument('--debug', action='store_true', help='Enable debugging')
     parser.add_argument('-c', '--config', type=Path, required=True, help='Config file path')
-    parser.add_argument('--skip-telegram', action='store_true', help='Skip Telegram')
-    parser.add_argument('--skip-git', action='store_true', help='Skip GitHub check')
+    parser.add_argument('--skip-telegram', action='store_true', help='Skip Telegram notifications')
+    parser.add_argument('--register-fingerprint', action='store_true', help='Save the update fingerprint without sending a notification')
+    parser.add_argument('--force-notify', action='store_true', help='Send notification even if the update has been seen before')
     parser.add_argument('-i', '--incremental', help='Override incremental version')
-    parser.add_argument('--proxy', help='Proxy URL for update checks (e.g., socks5://127.0.0.1:1080 or http://user:pass@host:port)')
     args = parser.parse_args()
-
-    # Setup proxy only for update checking
-    proxies = setup_proxy(args.proxy)
     
     try:
         cfg = Config.from_yaml(args.config)
@@ -469,22 +398,20 @@ def main() -> int:
     config_name = args.config.stem
 
     tg = None
-    if not args.skip_telegram:
+    if not args.skip_telegram and not args.register_fingerprint:
         token = os.environ.get('bot_token')
         chat = os.environ.get('chat_id')
         if not token or not chat:
-            Log.w("Telegram env vars not set")
+            Log.w("Telegram env vars not set, skipping notifications")
             args.skip_telegram = True
         else:
             try:
-                # Initialize TgNotify without proxies
-                tg = TgNotify(token, chat, None)
+                tg = TgNotify(token, chat)
             except ValueError as e:
                 Log.e(f"Telegram setup failed: {e}")
                 args.skip_telegram = True
 
-    # Use proxies only for the update checker
-    checker = UpdateChecker(cfg, proxies)
+    checker = UpdateChecker(cfg)
     store = InfoStore(Path(UPDATE_FILE))
 
     fp = cfg.fingerprint()
@@ -515,23 +442,44 @@ def main() -> int:
     desc = data.get('description', 'No description')
 
     if not all([title, url, size]):
-        Log.e("Missing essential info")
+        Log.e("Missing essential update info (title, url, or size)")
         return 1
 
-    Log.s(f"New OTA update: {title}")
+    Log.s(f"New OTA update found: {title}")
     Log.i(f"Size: {size}")
     Log.i(f"URL: {url}")
 
-    if not args.skip_git:
-        if check_release(title):
-            Log.i("GitHub release exists, skipping notification")
-            return 0
+    target_fp = get_fingerprint(url)
+    if not target_fp:
+        Log.e("Could not determine target fingerprint. Cannot verify if update is new.")
+        return 1
+    
+    Log.i(f"Target build: {target_fp}")
 
-    # Get fingerprint without using proxy
-    target_fp = get_fingerprint(url, None)
-    if target_fp != "N/A":
-        Log.i(f"Target build: {target_fp}")
+    processed_fp_path = Path(PROCESSED_FP_FILE)
+    processed_fingerprints = load_processed_fingerprints(processed_fp_path)
+    is_new_update = target_fp not in processed_fingerprints
 
+    # If the update is not new and we are not forcing a notification, exit.
+    if not is_new_update and not args.force_notify:
+        Log.i("This update has already been processed. Skipping.")
+        return 0
+    
+    # If the register flag is set, save the new fingerprint (if any) and exit.
+    if args.register_fingerprint:
+        if is_new_update:
+            Log.i("--register-fingerprint flag is set. Saving new fingerprint without notification.")
+            save_processed_fingerprint(processed_fp_path, target_fp)
+            Log.s("Update check completed successfully (fingerprint registered).")
+        else:
+            Log.i("--register-fingerprint flag is set, but fingerprint is already known. No action taken.")
+        return 0
+    
+    # If we are forcing a notification for an old update, log it.
+    if not is_new_update and args.force_notify:
+        Log.w(f"Forcing notification for an already processed update: {target_fp}")
+
+    # Continue with notification if not manually skipped.
     if not args.skip_telegram and tg:
         msg = (
             f"<blockquote><b>OTA Update Available</b></blockquote>\n\n"
@@ -542,10 +490,15 @@ def main() -> int:
             f"<b>Fingerprint:</b>\n<code>{target_fp}</code>"
         )
 
-        if not tg.send(msg, "Google OTA Link", url):
+        if tg.send(msg, "Google OTA Link", url):
+            # Only save the fingerprint if it's a new update.
+            if is_new_update:
+                save_processed_fingerprint(processed_fp_path, target_fp)
+        else:
+            Log.e("Failed to send notification. Fingerprint will not be saved.")
             return 1
 
-    Log.s("Update check completed")
+    Log.s("Update check completed successfully")
     return 0
 
 if __name__ == "__main__":
