@@ -329,28 +329,53 @@ def get_fingerprint(url: str) -> Optional[str]:
     cmds = ['curl', 'bsdtar', 'grep', 'sed']
     if not check_cmds(cmds):
         return None
-    
-    cmd = (
-        f"curl --fail -Ls --max-time 60 --limit-rate 100K {shlex.quote(url)} "
-        f"| ( bsdtar -Oxf - 'META-INF/com/android/metadata' 2>/dev/null || true ) "
-        f"| ( grep -m1 '^post-build=' | sed 's/^post-build=//' && pkill curl ) "
-        f"2>/dev/null"
-    )
+
+    curl_cmd = ['curl', '--fail', '-Ls', '--max-time', '60', '--limit-rate', '100K', url]
+    bsdtar_cmd = ['bsdtar', '-Oxf', '-', 'META-INF/com/android/metadata']
+    grep_cmd = ['grep', '-m1', '^post-build=']
+    sed_cmd = ['sed', 's/^post-build=//']
+
+    curl_proc = None
 
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=90, check=False)
+        curl_proc = subprocess.Popen(
+            curl_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL # Suppress curl's progress meter
+        )
 
-        if result.returncode != 0 or not result.stdout.strip():
-            Log.w("Could not extract fingerprint")
+        bsdtar_proc = subprocess.Popen(bsdtar_cmd, stdin=curl_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        curl_proc.stdout.close()  # Allows curl to receive a SIGPIPE if bsdtar dies
+
+        grep_proc = subprocess.Popen(grep_cmd, stdin=bsdtar_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        bsdtar_proc.stdout.close() # Allows bsdtar to receive a SIGPIPE...
+
+        sed_proc = subprocess.Popen(sed_cmd, stdin=grep_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        grep_proc.stdout.close() # Allows grep to receive a SIGPIPE...
+
+        try:
+            # The timeout applies to reading the final output
+            stdout_bytes, _ = sed_proc.communicate(timeout=90)
+            fp = stdout_bytes.decode('utf-8').strip()
+        except subprocess.TimeoutExpired:
+            Log.w("Timeout expired while fetching fingerprint.")
+            # The 'finally' block below will handle killing the curl process
             return None
 
-        fp = result.stdout.strip()
+        if not fp:
+            Log.w("Could not extract fingerprint (pipeline returned empty).")
+            return None
+
         Log.i(f"Extracted fingerprint: {fp}")
         return fp
 
     except Exception as e:
-        Log.e(f"Error fetching fingerprint: {e}")
+        Log.e(f"Error setting up fingerprint pipeline: {e}")
         return None
+    finally:
+        if curl_proc and curl_proc.poll() is None:
+            Log.i(f"Cleaning up leftover curl process (PID: {curl_proc.pid})...")
+            curl_proc.kill()
 
 def load_processed_fingerprints(path: Path) -> Set[str]:
     """Loads processed fingerprints from a file into a set."""
